@@ -1,0 +1,4 @@
+k3s_version: v1.29.0+k3s1
+k3s_server_ip: 192.168.1.201
+# Sensitive variables are stored in all/vault.yml
+ansible_become_pass: "{{ vault_ansible_become_pass }}"

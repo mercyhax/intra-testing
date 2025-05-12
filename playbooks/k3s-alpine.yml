@@ -1,0 +1,96 @@
+---
+- name: Install K3s master on Alpine Linux
+  hosts: masters
+  become: yes
+  become_method: su
+  become_flags: "-"
+  gather_facts: no
+  vars:
+    ansible_command_timeout: 60
+  pre_tasks:
+    - name: Install Python
+      raw: apk add --no-cache python3
+    
+    - name: Gather facts
+      setup:
+  
+  tasks:
+    - name: Check if K3s server is installed
+      stat:
+        path: /usr/local/bin/k3s-uninstall.sh
+      register: k3s_uninstall
+
+    - name: Uninstall K3s if already installed
+      shell: /usr/local/bin/k3s-uninstall.sh
+      when: k3s_uninstall.stat.exists
+      
+    - name: Ensure dependencies are present
+      apk:
+        name: curl
+        state: present
+
+    - name: Install K3s server
+      shell: |
+        curl -sfL https://get.k3s.io | sh -
+      args:
+        creates: /etc/rancher/k3s/k3s.yaml
+
+    - name: Wait for node-token file to be created
+      wait_for:
+        path: /var/lib/rancher/k3s/server/node-token
+        state: present
+        delay: 5
+        timeout: 60
+
+    - name: Read K3s node token
+      slurp:
+        src: /var/lib/rancher/k3s/server/node-token
+      register: k3s_token
+
+    - name: Set K3s token fact
+      set_fact:
+        k3s_node_token: "{{ k3s_token['content'] | b64decode | trim }}"
+      delegate_to: localhost
+
+    - name: Fetch kubeconfig
+      fetch:
+        src: /etc/rancher/k3s/k3s.yaml
+        dest: ./kubeconfig
+        flat: yes
+
+- name: Install K3s agent on Alpine Linux workers
+  hosts: workers
+  become: yes
+  become_method: su
+  become_flags: "-"
+  gather_facts: no
+  vars:
+    ansible_command_timeout: 60
+    k3s_url: "https://{{ hostvars[groups['masters'][0]]['ansible_host'] | default(groups['masters'][0]) }}:6443"
+  pre_tasks:
+    - name: Install Python
+      raw: apk add --no-cache python3
+    
+    - name: Gather facts
+      setup:
+      
+  tasks:
+    - name: Check if K3s agent is installed
+      stat:
+        path: /usr/local/bin/k3s-agent-uninstall.sh
+      register: k3s_agent_uninstall
+
+    - name: Uninstall K3s agent if already installed
+      shell: /usr/local/bin/k3s-agent-uninstall.sh
+      when: k3s_agent_uninstall.stat.exists
+      
+    - name: Ensure dependencies are present
+      apk:
+        name: curl
+        state: present
+
+    - name: Install K3s agent
+      shell: |
+        curl -sfL https://get.k3s.io | K3S_URL={{ k3s_url }} K3S_TOKEN={{ hostvars[groups['masters'][0]]['k3s_node_token'] }} sh -
+      args:
+        creates: /etc/rancher/k3s/k3s-agent.yaml
